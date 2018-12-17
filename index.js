@@ -1,8 +1,7 @@
 import * as React from 'react';
 import * as ReactDOM from 'react-dom';
 import styled from 'styled-components';
-import styled from 'styled-components';
-import Tesseract from 'tesseract.js';
+// import Tesseract from 'tesseract.js';
 
 const getMediaStream = async mediaDevices => {
   const mediaDeviceInfoList = await mediaDevices.enumerateDevices();
@@ -20,9 +19,56 @@ const getMediaStream = async mediaDevices => {
   });
 };
 
+const sharpen = (data, width) => {
+
+  const sharpedColor = (data, width, color, i) => {
+    const coefficientSub = -1;
+    const coefficientMain = 10;
+
+    const prevLine = i - (width * 4);
+    const nextLine = i + (width * 4);
+
+    const sumPrevLineColor = (data[prevLine-4+color] * coefficientSub)  +  (data[prevLine+color] * coefficientSub )  +  (data[prevLine+4+color] * coefficientSub);
+    const sumCurrLineColor = (data[i       -4+color] * coefficientSub)  +  (data[i       +color] * coefficientMain)  +  (data[i       +4+color] * coefficientSub);
+    const sumNextLineColor = (data[nextLine-4+color] * coefficientSub)  +  (data[nextLine+color] * coefficientSub )  +  (data[nextLine+4+color] * coefficientSub);
+
+    return (sumPrevLineColor + sumCurrLineColor + sumNextLineColor) / 2
+  };
+
+  const dataBefore = data.slice();
+  for (let i = width * 4; i + (width * 4) < data.length; i += 4) {
+    if (i % (width * 4) !== 0 && i % ((width * 4) + 300) !== 0) {
+      data[i]   = sharpedColor(dataBefore, width, 0, i);
+      data[i+1] = sharpedColor(dataBefore, width, 1, i);
+      data[i+2] = sharpedColor(dataBefore, width, 2, i);
+    }
+  }
+};
+
+const monochrome = data => {
+
+  const getColor = (threshold, data, i) => {
+    const avg = (data[i] + data[i+1] + data[i+2]) / 3;
+    if (threshold < avg) {
+      return 255;
+    } else {
+      return 0;
+    }
+  };
+
+  const threshold = 200;
+  for (let i = 0; i < data.length; i += 4) {
+    const color = getColor(threshold, data, i);
+    data[i] = data[i+1] = data[i+2] = color;
+  }
+};
+
+
+
 class Application extends React.Component {
 
   constructor() {
+    super();
     this.state = {
       status: 'read',
       sentence: 'Tap! Tap! Tap!',
@@ -41,8 +87,10 @@ class Application extends React.Component {
     }
     const mediaStream = await getMediaStream(this.mediaDevices);
     this.videoStreamInUse = mediaStream;
-    this.refs.picture.srcObject = mediaStream;
-    this.state = 'relay';
+    this.refs.video.srcObject = mediaStream;
+    this.setState({
+      status: 'relay',
+    });
   };
 
   capture() {
@@ -65,20 +113,19 @@ class Application extends React.Component {
 
   cutStart(e) {
     this.setState({
-      status: 'cut',
       startX: e.clientX,
       startY: e.clientY,
       endX: e.clientX,
       endY: e.clientY,
     });
     this.moving = this.cutting;
-    this.refs.canvas.addEventListener("mousemove", this.cutting.bind(this), false);
+    this.refs.picture.addEventListener("mousemove", this.cutting.bind(this), false);
   };
 
   cutting(e) {
     const state = this.state;
-    const endX = e.layerX - state.startX;
-    const endY = e.layerY - state.startY;
+    const endX = e.clientX - state.startX;
+    const endY = e.clientY - state.startY;
     this.setState({
       endX: endX,
       endY: endY,
@@ -98,46 +145,52 @@ class Application extends React.Component {
     this.moving = null;
     const imgData = this.ctxDisplayLayer.getImageData(state.startX, state.startY, state.endX, state.endY);
 
-    Tesseract.recognize(imgData).progress(message => {
-      this.setState(
-        sentence: 'Wait! Wait! Wait!',
-      );
-    }).then(result => {
-      this.setState(
-        sentence: result.text,
-      );
-    });
+    sharpen(imgData.data, state.canvasX);
+    monochrome(imgData.data);
+    this.refs.debug.src = imgData;
+    this.setState({ status: 'debug' });
 
-    this.ctxDrowingLayer.clearRect(0, 0, state.canvasX, state.canvasY);
-    this.ctxDisplayLayer.clearRect(0, 0, state.canvasX, state.canvasY);
-    this.setState({
-      status: 'read',
-      startX: 0,
-      startY: 0,
-      endX: 0,
-      endY: 0,
-      canvasX: 0,
-      canvasY: 0,
-    });
+    // Tesseract.recognize(imgData).progress(message => {
+    //   console.log(message);
+    //   this.setState({
+    //     sentence: 'Wait! Wait! Wait!',
+    //   });
+    // }).then(result => {
+    //   console.log(result);
+    //   this.setState({
+    //     sentence: result.text,
+    //   });
+    // }).catch(err => {
+    //   console.log(err);
+    // });
+
+    // this.ctxDrowingLayer.clearRect(0, 0, state.canvasX, state.canvasY);
+    // this.ctxDisplayLayer.clearRect(0, 0, state.canvasX, state.canvasY);
+    // this.setState({
+    //   status: 'read',
+    //   startX: 0,
+    //   startY: 0,
+    //   endX: 0,
+    //   endY: 0,
+    //   canvasX: 0,
+    //   canvasY: 0,
+    // });
   };
 
   render() {
     // style={{ height: '100%', width: '100%', backgroundColor: '#FFF', }}
     return (
       <div>
-      { this.state.status === 'relay' &&
-        <div>
+        <div style={ this.state.status === 'relay' ? {} : { display: 'none'} }>
           <video
             width="360"
             height="270"
-            autoplay
-            onclick={this.capture.bind(this)}
+            autoPlay
+            onClick={this.capture.bind(this)}
             ref="video"
           />
         </div>
-      }
-      { this.state.status === 'edit' &&
-        <div>
+        <div style={ this.state.status === 'edit' ? {} : { display: 'none'} }>
           <canvas
             width="360"
             height="270"
@@ -154,9 +207,9 @@ class Application extends React.Component {
             width="360"
             height="270"
             ref="drawing"
-            onmousedown={this.cutStart.bind(this)}
-            onmouseup={this.cutFinish.bind(this)}
-            onmousemove={this.cutMoving.bind(this)}
+            onMouseDown={this.cutStart.bind(this)}
+            onMouseUp={this.cutFinish.bind(this)}
+            onMouseMove={this.cutMoving.bind(this)}
             style={{
               position: 'absolute',
               left: 0,
@@ -165,11 +218,9 @@ class Application extends React.Component {
             }}
           />
         </div>
-      }
-      { this.state.status === 'read' &&
-        <div>
+        <div style={ this.state.status === 'read' ? {} : { display: 'none'} }>
           <p
-            onclick={this.relay.bind(this)}
+            onClick={this.relay.bind(this)}
             style={{
               height: '40px',
               width: '280px',
@@ -181,9 +232,13 @@ class Application extends React.Component {
             }}
           >{ this.state.sentence }</p>
         </div>
-      }
+        <div style={ this.state.status === 'debug' ? {} : { display: 'none'} }>
+          <img ref="debug" />
+        </div>
       </div>
     );
   }
 }
+
+ReactDOM.render(<Application />, document.getElementById('content'));
 

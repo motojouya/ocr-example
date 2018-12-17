@@ -23,7 +23,8 @@ RUN chown -R node:node .
 
 USER node
 
-# RUN npm install
+COPY . /usr/local/src/ocr/
+RUN yarn install
 
-# CMD npm start
+CMD npm start
 
